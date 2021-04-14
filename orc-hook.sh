@@ -2,8 +2,8 @@
 
 templateFile="/etc/consul-template/templates/haproxy.ctmpl"
 haproxycfg="/etc/haproxy/haproxy.cfg"
-apiIpAndPort="10.0.34.78:3000"
-consulIpAndPort="10.0.34.78:8500"
+apiIpAndPort="10.0.0.78:3000"
+consulIpAndPort="10.0.0.78:8500"
 isitdead="DeadMaster"
 
 logfile="/var/log/orch_hook.log"
