@@ -2,15 +2,15 @@
 
 templateFile="/etc/consul-template/templates/haproxy.ctmpl"
 haproxycfg="/etc/haproxy/haproxy.cfg"
-apiIpAndPort="10.0.0.78:3000"
-consulIpAndPort="10.0.0.78:8500"
+apiIpAndPort="10.0.34.78:3000"
+consulIpAndPort="10.0.34.78:8500"
 isitdead="DeadMaster"
 
 logfile="/var/log/orch_hook.log"
 #找到down掉的slave节点,输出一个数组
 getDownReplicasList(){
 	#返回值为 templateFile路径的文件，down的节点配置信息所对应的行号
-	replicasDownUrl=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select(.Slave_IO_Running==false and .ReplicationDepth==1) .Key.Hostname' -r`
+	replicasDownUrl=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select((.Slave_IO_Running==false or .Slave_SQL_Running==false) and .ReplicationDepth==1) .Key.Hostname' -r`
     for value in $replicasDownUrl;do
 		num=`grep -n "$1_$value"  $templateFile | awk -F':' '{print $1}'`
 		arr[${#arr[@]}]=$num
@@ -129,6 +129,24 @@ changeHaproxyTmeplate(){
 
 }
 
+
+checkHostStatus(){
+	clusterAlias=$(getClusterAlias) 
+	for val in $clusterAlias;do
+		moveNode=$(getMoveClusterNode $val)
+		arr[${#arr[@]}]=$moveNode
+	done
+	
+	#upNodeList=$(getUpReplicasList  $1)
+	#masterNode=$(getMasterNode $1)
+	#moveNode=$(getMoveClusterNode $1)
+	#echo moveNode: $moveNode
+	#echo masterNode: $masterNode
+	#echo upNodeList: $upNodeList
+	echo ${arr[*]}
+}
+
+
 if [[ $isitdead == "DeadMaster" ]]; then
 
 	clusterAlias=$(getClusterAlias) 
@@ -137,6 +155,14 @@ if [[ $isitdead == "DeadMaster" ]]; then
 	for val in $clusterAlias;do
 		changeHaproxyTmeplate $val
 	done
+	
+	template=`grep "server " /etc/consul-template/templates/haproxy.ctmpl|grep -v "server master"`
+	haproxy=`grep "server " /etc/haproxy/haproxy.cfg|grep -v "server master"`
+	if [[ $template == $haproxy ]];then
+		exit
+	else
+		echo "go...."
+	fi
 	
 	#更新模板
 	rm -rf /etc/haproxy/haproxy.cfg.1
