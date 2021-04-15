@@ -42,7 +42,7 @@ getMasterNode(){
 }
 
 getMoveClusterNode(){
-	  #已经不在cluster 中了
+	  #已经不在cluster 中的节点
     allNum=(`grep -n "$1_"  $templateFile | awk -F':' '{print $1}'`)
     masterNum=$(getMasterNode $1)
     upNum=$(getUpReplicasList $1)
@@ -66,6 +66,7 @@ getMoveClusterNode(){
 }
 
 getClusterAlias(){
+	#获取cluster别名
 	aliasNames=`curl  -sS http://${apiIpAndPort}/api/clusters-info | jq '.[] .ClusterAlias' -r`
 	for val in $aliasNames;do
 		curl  -sS http://${apiIpAndPort}/api/cluster/alias/$val | jq '.[] | select(.ReplicationDepth==0) .Key.Hostname' -r >/dev/null 2>&1
@@ -76,8 +77,8 @@ getClusterAlias(){
 	echo ${arr[*]}
 }
 
-changeHaproxyTmeplate(){
-	
+setHaproxyTmeplate(){
+	#修改consul-template的模板文件
 	#找到down掉的slave节点：
 	downNodeList=$(getDownReplicasList  $1)
 	echo `date "+%Y-%m-%d %H:%M:%S"` "down:$downNodeList" #>> $logfile
@@ -98,7 +99,7 @@ changeHaproxyTmeplate(){
 	echo masterNode: $masterNode
 	echo upNodeList: $upNodeList
 	
-	if [[ $upNodeList ]];then
+	if [[ $upNodeList && -n "$masterNode" ]];then
 		
 		echo `date "+%Y-%m-%d %H:%M:%S"` "info: 修改consul template模板中${masterNode} 的weight值！" >> $logfile
 		sed -i "${masterNode}s/weight [0-9]*/weight 0/" $templateFile
@@ -112,7 +113,7 @@ changeHaproxyTmeplate(){
 				sed -i "${val}s/weight [0-9]*/weight 0/" $templateFile
 			done
 		fi
-	else
+	elif [[ -n "$masterNode" ]];then
 		#一个cluster中所有的slave节点都宕机
 		#echo `date "+%Y-%m-%d %H:%M:%S"`" command: grep $1_${masterNode} $templateFile|sed 's/weight [0-9]*/weight 10/g'" >> $logfile
 		echo `date "+%Y-%m-%d %H:%M:%S"` "info: 修改consul template模板中${masterNode} 的weight值！" >> $logfile
@@ -125,6 +126,8 @@ changeHaproxyTmeplate(){
 				sed -i "${val}s/weight [0-9]*/weight 0/" $templateFile
 			done
 		fi
+	else
+		echo ".......null..........."
 	fi
 
 }
@@ -146,29 +149,29 @@ checkHostStatus(){
 	echo ${arr[*]}
 }
 
-
 if [[ $isitdead == "DeadMaster" ]]; then
 
 	clusterAlias=$(getClusterAlias) 
 	echo "------------start------------------------------------" >> $logfile
 	
 	for val in $clusterAlias;do
-		changeHaproxyTmeplate $val
+		setHaproxyTmeplate $val
 	done
 	
+	#检查是否需要修改
+
 	template=`grep "server " /etc/consul-template/templates/haproxy.ctmpl|grep -v "server master"`
 	haproxy=`grep "server " /etc/haproxy/haproxy.cfg|grep -v "server master"`
 	if [[ $template == $haproxy ]];then
 		exit
 	else
 		echo "go...."
+		#更新模板
+		rm -rf /etc/haproxy/haproxy.cfg.1
+		cp /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.1
+		consul-template -consul-addr=${consulIpAndPort} -template "$templateFile:${haproxycfg}" -once
 	fi
-	
-	#更新模板
-	rm -rf /etc/haproxy/haproxy.cfg.1
-	cp /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.1
-	consul-template -consul-addr=${consulIpAndPort} -template "$templateFile:${haproxycfg}" -once
-	
+
 elif [[ $isitdead == "DeadIntermediateMasterWithSingleSlaveFailingToConnect" ]]; then
 
 	echo $(date)
