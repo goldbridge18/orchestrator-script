@@ -2,8 +2,8 @@
 
 templateFile="/etc/consul-template/templates/haproxy.ctmpl"
 haproxycfg="/etc/haproxy/haproxy.cfg"
-apiIpAndPort="10.0.34.78:3000"
-consulIpAndPort="10.0.34.78:8500"
+apiIpAndPort="10.0.0.78:3000"
+consulIpAndPort="10.0.0.78:8500"
 isitdead="DeadMaster"
 
 logfile="/var/log/orch_hook.log"
@@ -132,14 +132,12 @@ setHaproxyTmeplate(){
 
 }
 
-
 checkHostStatus(){
 	clusterAlias=$(getClusterAlias) 
 	for val in $clusterAlias;do
 		moveNode=$(getMoveClusterNode $val)
 		arr[${#arr[@]}]=$moveNode
 	done
-	
 	#upNodeList=$(getUpReplicasList  $1)
 	#masterNode=$(getMasterNode $1)
 	#moveNode=$(getMoveClusterNode $1)
@@ -157,9 +155,7 @@ if [[ $isitdead == "DeadMaster" ]]; then
 	for val in $clusterAlias;do
 		setHaproxyTmeplate $val
 	done
-	
 	#检查是否需要修改
-
 	template=`grep "server " /etc/consul-template/templates/haproxy.ctmpl|grep -v "server master"`
 	haproxy=`grep "server " /etc/haproxy/haproxy.cfg|grep -v "server master"`
 	if [[ $template == $haproxy ]];then
