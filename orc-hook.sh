@@ -1,17 +1,21 @@
 #!/bin/bash
 
-templateFile="/etc/consul-template/templates/haproxy.ctmpl"
-haproxycfg="/etc/haproxy/haproxy.cfg"
+
 apiIpAndPort="10.0.0.78:3000"
 consulIpAndPort="10.0.0.78:8500"
 isitdead="DeadMaster"
+delaytime=100
 
+#文件路径
+templateFile="/etc/consul-template/templates/haproxy.ctmpl"
+haproxycfg="/etc/haproxy/haproxy.cfg"
 logfile="/var/log/orch_hook.log"
+
 #找到down掉的slave节点,输出一个数组
 getDownReplicasList(){
 	#返回值为 templateFile路径的文件，down的节点配置信息所对应的行号
-	replicasDownUrl=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select((.Slave_IO_Running==false or .Slave_SQL_Running==false) and .ReplicationDepth==1) .Key.Hostname' -r`
-    for value in $replicasDownUrl;do
+	replicasDownHostName=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select((.Slave_IO_Running==false or .Slave_SQL_Running==false) and .ReplicationDepth==1) .Key.Hostname' -r`
+    for value in $replicasDownHostName;do
 		num=`grep -n "$1_$value"  $templateFile | awk -F':' '{print $1}'`
 		arr[${#arr[@]}]=$num
     done
@@ -22,9 +26,9 @@ getDownReplicasList(){
 getUpReplicasList(){
 	#返回值为 templateFile路径的文件，down的节点配置信息所对应的行号
     #downNodeList=$(getDownReplicasList $1)
-	replicasUpUrl=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select(.Slave_IO_Running==true and .Slave_SQL_Running==true and .ReplicationDepth==1) .Key.Hostname' -r`
+	replicasUpHostName=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select(.Slave_IO_Running==true and .Slave_SQL_Running==true and .ReplicationDepth==1) .Key.Hostname' -r`
 	
-    for value in $replicasUpUrl;do
+    for value in $replicasUpHostName;do
 	    #https://gist.github.com/likohank/5dec12b808d6b3577dd9d8b3bb6a22b5 判断某个元素是否在数组里
 		#if [[ ! "${downNodeList}" =~ "${value}" ]]; then 
 		#fi 
@@ -35,14 +39,14 @@ getUpReplicasList(){
 }
 
 getMasterNode(){
-	masterUrl=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select(.ReplicationDepth==0) .Key.Hostname' -r `
-	num=`grep -n "$1_$masterUrl"  $templateFile | awk -F':' '{print $1}'`
+	masterHostName=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select(.ReplicationDepth==0) .Key.Hostname' -r `
+	num=`grep -n "$1_$masterHostName"  $templateFile | awk -F':' '{print $1}'`
 	arr[${#arr[@]}]=$num
 	echo ${arr[*]}
 }
 
 getMoveClusterNode(){
-	  #已经不在cluster 中的节点
+	#已经不在cluster 中的节点
     allNum=(`grep -n "$1_"  $templateFile | awk -F':' '{print $1}'`)
     masterNum=$(getMasterNode $1)
     upNum=$(getUpReplicasList $1)
@@ -65,6 +69,29 @@ getMoveClusterNode(){
     echo ${allNum[*]}
 }
 
+getDelayReplica(){
+	
+	#获取延迟库的主机名列表
+	dalayHostName=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq ".[] | select(.Slave_IO_Running==true and .Slave_SQL_Running==true and .ReplicationDepth==1 and .SQLDelay > ${delaytime}) .Key.Hostname" -r`
+	for val in $dalayHostName;do
+		num=`grep -n "$1_$val"  $templateFile | awk -F':' '{print $1}'`
+		arr[${#arr[@]}]=$num
+	done
+	echo ${arr[*]}
+}
+
+setReplicaOnlyRead(){
+	#设置只读 $1 别名
+	replicasUpHostName=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select(.Slave_IO_Running==true and .Slave_SQL_Running==true and .ReplicationDepth==1 and .ReadOnly==false) .Key.Hostname' -r`
+	
+	if [[ $replicasUpHostName ]];then
+	
+		for val in $replicasUpHostName;do
+			curl  -sS http://${apiIpAndPort}/api/set-read-only/${val}/61106 >>$logfile
+			echo "$val set only read!!" >>$logfile
+		done
+	fi
+}
 getClusterAlias(){
 	#获取cluster别名
 	aliasNames=`curl  -sS http://${apiIpAndPort}/api/clusters-info | jq '.[] .ClusterAlias' -r`
@@ -95,9 +122,11 @@ setHaproxyTmeplate(){
 	upNodeList=$(getUpReplicasList  $1)
 	masterNode=$(getMasterNode $1)
 	moveNode=$(getMoveClusterNode $1)
+	delayNode=$(getDelayReplica $1)
 	echo moveNode: $moveNode
 	echo masterNode: $masterNode
 	echo upNodeList: $upNodeList
+	echo delayNode: $delayNode
 	
 	if [[ $upNodeList && -n "$masterNode" ]];then
 		
@@ -115,7 +144,7 @@ setHaproxyTmeplate(){
 		fi
 	elif [[ -n "$masterNode" ]];then
 		#一个cluster中所有的slave节点都宕机
-		#echo `date "+%Y-%m-%d %H:%M:%S"`" command: grep $1_${masterNode} $templateFile|sed 's/weight [0-9]*/weight 10/g'" >> $logfile
+		#echo `date '+%Y-%m-%d %H:%M:%S'`" command: grep $1_${masterNode} $templateFile|sed 's/weight [0-9]*/weight 10/g'" >> $logfile
 		echo `date "+%Y-%m-%d %H:%M:%S"` "info: 修改consul template模板中${masterNode} 的weight值！" >> $logfile
 
 		#master的在read端口下提供服务
@@ -132,12 +161,14 @@ setHaproxyTmeplate(){
 
 }
 
+
 checkHostStatus(){
 	clusterAlias=$(getClusterAlias) 
 	for val in $clusterAlias;do
 		moveNode=$(getMoveClusterNode $val)
 		arr[${#arr[@]}]=$moveNode
 	done
+	
 	#upNodeList=$(getUpReplicasList  $1)
 	#masterNode=$(getMasterNode $1)
 	#moveNode=$(getMoveClusterNode $1)
@@ -154,8 +185,11 @@ if [[ $isitdead == "DeadMaster" ]]; then
 	
 	for val in $clusterAlias;do
 		setHaproxyTmeplate $val
+		setReplicaOnlyRead $val
 	done
+	
 	#检查是否需要修改
+
 	template=`grep "server " /etc/consul-template/templates/haproxy.ctmpl|grep -v "server master"`
 	haproxy=`grep "server " /etc/haproxy/haproxy.cfg|grep -v "server master"`
 	if [[ $template == $haproxy ]];then
@@ -166,8 +200,14 @@ if [[ $isitdead == "DeadMaster" ]]; then
 		rm -rf /etc/haproxy/haproxy.cfg.1
 		cp /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.1
 		consul-template -consul-addr=${consulIpAndPort} -template "$templateFile:${haproxycfg}" -once
+		systemctl reload haproxy
+		
 	fi
-
+	
+	echo "----------end--------------"
+	
+	
+	
 elif [[ $isitdead == "DeadIntermediateMasterWithSingleSlaveFailingToConnect" ]]; then
 
 	echo $(date)
