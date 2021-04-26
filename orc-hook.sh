@@ -1,10 +1,12 @@
 #!/bin/bash
 
+#change master to master_host='tidb2',master_user='rep',master_password='rep123',MASTER_AUTO_POSITION=1,MASTER_HEARTBEAT_PERIOD=2,master_port=61106,MASTER_CONNECT_RETRY=1,MASTER_RETRY_COUNT=86400;
 
-apiIpAndPort="10.0.0.78:3000"
-consulIpAndPort="10.0.0.78:8500"
+apiIpAndPort="10.0.34.78:3000"
+consulIpAndPort="10.0.34.78:8500"
 isitdead="DeadMaster"
 delaytime=100
+mysqlport=61106
 
 #文件路径
 templateFile="/etc/consul-template/templates/haproxy.ctmpl"
@@ -73,6 +75,7 @@ getDelayReplica(){
 	
 	#获取延迟库的主机名列表
 	dalayHostName=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq ".[] | select(.Slave_IO_Running==true and .Slave_SQL_Running==true and .ReplicationDepth==1 and .SQLDelay > ${delaytime}) .Key.Hostname" -r`
+	
 	for val in $dalayHostName;do
 		num=`grep -n "$1_$val"  $templateFile | awk -F':' '{print $1}'`
 		arr[${#arr[@]}]=$num
@@ -80,18 +83,23 @@ getDelayReplica(){
 	echo ${arr[*]}
 }
 
-setReplicaOnlyRead(){
-	#设置只读 $1 别名
-	replicasUpHostName=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select(.Slave_IO_Running==true and .Slave_SQL_Running==true and .ReplicationDepth==1 and .ReadOnly==false) .Key.Hostname' -r`
+
+checkHostStatus(){
+	clusterAlias=$(getClusterAlias) 
+	for val in $clusterAlias;do
+		moveNode=$(getMoveClusterNode $val)
+		arr[${#arr[@]}]=$moveNode
+	done
 	
-	if [[ $replicasUpHostName ]];then
-	
-		for val in $replicasUpHostName;do
-			curl  -sS http://${apiIpAndPort}/api/set-read-only/${val}/61106 >>$logfile
-			echo "$val set only read!!" >>$logfile
-		done
-	fi
+	#upNodeList=$(getUpReplicasList  $1)
+	#masterNode=$(getMasterNode $1)
+	#moveNode=$(getMoveClusterNode $1)
+	#echo moveNode: $moveNode
+	#echo masterNode: $masterNode
+	#echo upNodeList: $upNodeList
+	echo ${arr[*]}
 }
+
 getClusterAlias(){
 	#获取cluster别名
 	aliasNames=`curl  -sS http://${apiIpAndPort}/api/clusters-info | jq '.[] .ClusterAlias' -r`
@@ -104,9 +112,26 @@ getClusterAlias(){
 	echo ${arr[*]}
 }
 
+
+setReplicaOnlyRead(){
+	#设置只读 $1 别名
+	replicasUpHostName=`curl  -sS http://${apiIpAndPort}/api/cluster/alias/$1 | jq '.[] | select(.Slave_IO_Running==true and .Slave_SQL_Running==true and .ReplicationDepth==1 and .ReadOnly==false) .Key.Hostname' -r`
+	if [ $? -eq 1 ];then
+		replicasUpHostName=""
+	fi
+	if [[ $replicasUpHostName ]];then
+		
+		for val in $replicasUpHostName;do
+			curl  -sS http://${apiIpAndPort}/api/set-read-only/${val}/${mysqlport} >>$logfile
+			echo `date "+%Y-%m-%d %H:%M:%S"` "$val set only read!!" >>$logfile
+		done
+	fi
+}
+
 setHaproxyTmeplate(){
 	#修改consul-template的模板文件
 	#找到down掉的slave节点：
+	count=0
 	downNodeList=$(getDownReplicasList  $1)
 	echo `date "+%Y-%m-%d %H:%M:%S"` "down:$downNodeList" #>> $logfile
 	
@@ -123,14 +148,14 @@ setHaproxyTmeplate(){
 	masterNode=$(getMasterNode $1)
 	moveNode=$(getMoveClusterNode $1)
 	delayNode=$(getDelayReplica $1)
-	echo moveNode: $moveNode
-	echo masterNode: $masterNode
-	echo upNodeList: $upNodeList
-	echo delayNode: $delayNode
+	echo moveNode: $moveNode		>> $logfile
+	echo masterNode: $masterNode    >> $logfile
+	echo upNodeList: $upNodeList    >> $logfile
+	echo delayNode: $delayNode      >> $logfile
 	
 	if [[ $upNodeList && -n "$masterNode" ]];then
 		
-		echo `date "+%Y-%m-%d %H:%M:%S"` "info: 修改consul template模板中${masterNode} 的weight值！" >> $logfile
+		#echo `date "+%Y-%m-%d %H:%M:%S"` "info: 修改consul template模板中${masterNode} 的weight值！" >> $logfile
 		sed -i "${masterNode}s/weight [0-9]*/weight 0/" $templateFile
 		
 		for val in $upNodeList;do
@@ -159,54 +184,60 @@ setHaproxyTmeplate(){
 		echo ".......null..........."
 	fi
 
-}
+	#延迟处理
+	if [[ $delayNode ]];then
+		
+		for num in $upNodeList;do
+			count=`expr $count + 1`
+		done
 
-
-checkHostStatus(){
-	clusterAlias=$(getClusterAlias) 
-	for val in $clusterAlias;do
-		moveNode=$(getMoveClusterNode $val)
-		arr[${#arr[@]}]=$moveNode
-	done
-	
-	#upNodeList=$(getUpReplicasList  $1)
-	#masterNode=$(getMasterNode $1)
-	#moveNode=$(getMoveClusterNode $1)
-	#echo moveNode: $moveNode
-	#echo masterNode: $masterNode
-	#echo upNodeList: $upNodeList
-	echo ${arr[*]}
+		if [ $count -gt 1 ];then #大于
+			echo `date "+%Y-%m-%d %H:%M:%S"` "replica delay too loog ,closed!!"
+			for val in $delayNode;do
+				sed -i "${val}s/weight [0-9]*/weight 0/" $templateFile
+			done
+		else
+			sed -i "${masterNode}s/weight [0-9]*/weight 100/" $templateFile
+			for val in $delayNode;do
+				sed -i "${val}s/weight [0-9]*/weight 0/" $templateFile
+			done
+			
+		fi
+		
+	fi
 }
 
 if [[ $isitdead == "DeadMaster" ]]; then
 
 	clusterAlias=$(getClusterAlias) 
-	echo "------------start------------------------------------" >> $logfile
+	echo `date "+%Y-%m-%d %H:%M:%S"` "----------start--------------" >> $logfile
 	
 	for val in $clusterAlias;do
 		setHaproxyTmeplate $val
-		setReplicaOnlyRead $val
 	done
+	
+	#for val in $clusterAlias;do
+	#	setReplicaOnlyRead $val
+	#done
 	
 	#检查是否需要修改
 
-	template=`grep "server " /etc/consul-template/templates/haproxy.ctmpl|grep -v "server master"`
-	haproxy=`grep "server " /etc/haproxy/haproxy.cfg|grep -v "server master"`
+	template=`grep "server " $templateFile|grep -v "server master"`
+	haproxy=`grep "server " $haproxycfg|grep -v "server master"`
 	if [[ $template == $haproxy ]];then
-		exit
+		echo `date "+%Y-%m-%d %H:%M:%S"` "mysql状态检查正常！" >> $logfile
 	else
-		echo "go...."
+		echo `date "+%Y-%m-%d %H:%M:%S"` "go...." >> $logfile
+		echo `date "+%Y-%m-%d %H:%M:%S"` "替换haproxy的配置文件！" >> $logfile
 		#更新模板
 		rm -rf /etc/haproxy/haproxy.cfg.1
 		cp /etc/haproxy/haproxy.cfg /etc/haproxy/haproxy.cfg.1
-		consul-template -consul-addr=${consulIpAndPort} -template "$templateFile:${haproxycfg}" -once
+		/usr/local/bin/consul-template -consul-addr=${consulIpAndPort} -template "$templateFile:${haproxycfg}" -once
 		systemctl reload haproxy
 		
 	fi
 	
-	echo "----------end--------------"
-	
-	
+	echo `date "+%Y-%m-%d %H:%M:%S"` "----------end--------------" >> $logfile
 	
 elif [[ $isitdead == "DeadIntermediateMasterWithSingleSlaveFailingToConnect" ]]; then
 
