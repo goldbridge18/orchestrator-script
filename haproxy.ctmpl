@@ -1,0 +1,52 @@
+global
+  log 127.0.0.1 local0
+  log 127.0.0.1 local1 notice
+  maxconn 4096
+  chroot /usr/local/haproxy
+  user haproxy
+  group haproxy
+  daemon
+
+defaults
+  log global
+  mode http
+  option tcplog
+  option dontlognull
+  retries 3
+  option redispatch
+  maxconn 2000
+  timeout connect 5000
+  timeout client 50000
+  timeout server 50000
+
+frontend stats-front
+  bind *:80
+  mode http
+  default_backend stats-back
+
+backend stats-back
+  mode http
+  balance leastconn
+  stats uri /haproxy/stats
+  stats auth user:pass
+
+frontend writer-front-test
+  bind *:3301
+  mode tcp
+  default_backend writer-back-test
+
+frontend reader-front-test
+  bind *:3302
+  mode tcp
+  default_backend reader-back-test
+
+backend writer-back-test
+  mode tcp
+  server master {{key "mysql/master/test"}}  check inter 12000 rise 3 fall 3
+
+backend reader-back-test
+  mode tcp
+  balance leastconn 
+  server test_test1 10.0.0.1:3306 check inter 12000 rise 3 fall 3  weight 0
+  server test_test3 10.0.0.3:3306 check inter 12000 rise 3 fall 3  weight 10
+  server test_test2 10.0.0.2:3306 check inter 12000 rise 3 fall 3  weight 0
