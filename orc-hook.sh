@@ -3,8 +3,8 @@
 #change master to master_host='tidb2',master_user='rep',master_password='rep123',MASTER_AUTO_POSITION=1,MASTER_HEARTBEAT_PERIOD=2,master_port=61106,MASTER_CONNECT_RETRY=1,MASTER_RETRY_COUNT=86400;
 
 ##orchestrator配置信息
-apiIpAndPort="10.0.34.78:3000"
-consulIpAndPort="10.0.34.78:8500"
+apiIpAndPort="10.0.0.78:3000"
+consulIpAndPort="10.0.0.78:8500"
 isitdead="DeadMaster"
 delaytime=100
 mysqlport=3306
@@ -17,13 +17,13 @@ logfile="/var/log/orch_hook.log"
 
 
 #企业微信信息
-CropID='ww6be7e44xxxxxxxx'
-Secret='Vcjmxvhs-4zkVSgF_xxxxxxxxxxxxxxxxx'
+CropID='ww6be7xxxxxxx'
+Secret='Vcjmxvhs-4zkVSgF_La1Q6u0xxxxxx'
 GURL="https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid=$CropID&corpsecret=$Secret"
 Gtoken=$(/usr/bin/curl -s -G $GURL | awk -F \" '{print $10}')
 PURL="https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token=$Gtoken"
-AgentID=1000002           # 企业号中的应用id
-UserID='xxxxxx'            # 部门成员id，微信接收者
+AgentID=xxxxx           # 企业号中的应用id
+UserID='xxxxx'            # 部门成员id，微信接收者
 
 #微信报警模板
 function body() {
