@@ -2,7 +2,7 @@
 
 orchestrator is a MySQL high availability and replication management tool, runs as a service and provides command line access, HTTP API and Web interface
 
-在配置haproxy的server 名称需要注意格式: alias_hostname  
+1、在配置haproxy的server 名称需要注意格式: alias_hostname  
 
 - alias是orchestrator服务中为mysql设置的别名,
 - hostname是mysql节点的主机名 
