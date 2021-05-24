@@ -34,8 +34,8 @@ class OrcHook(object):
         return self.getJsonData(condition, request_cmd)
 
     def getSecondsBehindMaster(self,request_cmd):
-        condition = ".[] | select(.ReplicationDepth==1 and .SecondsBehindMaster.Int64 > {delaytime}) " \
-                    ".Key.Hostname".format(delaytime=self.num)
+        condition = ".[] | select(.ReplicationDepth==1 and .SecondsBehindMaster.Int64 > {num}) " \
+                    ".Key.Hostname".format(num=self.num)
         return self.getJsonData(condition, request_cmd)
 
     def getAliasOfAllNode(self,request_cmd):
@@ -63,6 +63,8 @@ class OrcHook(object):
         if len(behindMasterList) != 0:
             for val in behindMasterList:
                 moveNodeList.append(val)
+                if val in upNodeList:
+                    upNodeList.remove(val)
 
         if len(upList) != 0 :
             for val in masterList:
@@ -92,7 +94,7 @@ if __name__ == "__main__":
     apiIp = "10.0.34.78"
     apiPort = 3000
     consulIpAndPort = "10.0.34.78:8500"
-    delaytime = 1000000
+    delaytime = 60
 
     # 文件路径
     templateFile = "./haproxy.ctmpl"
@@ -119,9 +121,6 @@ if __name__ == "__main__":
             moveNodeList += offlineNodeList
             addNodeList +=  onlineNodeList
 
-        # print(moveNodeList)
-        # print(addNodeList)
-
         with open(templateFile,"r") as f1,open(templateFile1,"w",encoding= 'utf8') as f2:
             for val in f1.readlines():
                 for val01 in addNodeList:
@@ -143,13 +142,11 @@ if __name__ == "__main__":
         consulRestartCmd = "systemctl restart consul-template"
         haproxyReloadCmd = "systemctl reload haproxy"
         #consul-template
-        print(flag)
         if flag == False:
             consulTemplateCmd = "/usr/local/bin/consul-template -consul-addr={consulIpAndPort}" \
                                 " -template \"{templateFile}:{haproxycfg}\" " \
                                 "-once".format(consulIpAndPort=consulIpAndPort ,templateFile=templateFile1,haproxycfg=haproxyCfg)
             consulOutCmd = subprocess.getstatusoutput(consulTemplateCmd)
-            print(consulOutCmd)
             if consulOutCmd[0] != 0:
                 subprocess.getstatusoutput(consulRestartCmd)
 
@@ -162,5 +159,6 @@ if __name__ == "__main__":
         else:
             print("没有信息更改！")
         endtime = datetime.datetime.now()
-        print(endtime-starttime)
+        print("消耗总时间：",endtime-starttime)
+        exit()
         time.sleep(1)
