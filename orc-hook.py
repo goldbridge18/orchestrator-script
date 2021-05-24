@@ -152,13 +152,16 @@ if __name__ == "__main__":
 
             #reload haproxy
             haproxyOutCmd = subprocess.getstatusoutput(haproxyReloadCmd)
-            if haproxyOutCmd[0] != 0 :
+            # print(haproxyOutCmd)
+            if haproxyOutCmd[0] == 0 :
                     subprocess.getstatusoutput(consulRestartCmd)
             else:
-                subprocess.getstatusoutput("/bin/cp -rf {templateFile} {templateFile1}".format(templateFile1=templateFile1,templateFile=templateFile))
+                cmd = "/bin/cp -rf {templateFile1} {templateFile}".format(templateFile1=templateFile1,templateFile=templateFile)
+                subprocess.getstatusoutput(cmd)
         else:
             print("没有信息更改！")
         endtime = datetime.datetime.now()
+
         print("消耗总时间：",endtime-starttime)
-        exit()
+        # exit()
         time.sleep(1)
