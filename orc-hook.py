@@ -147,7 +147,7 @@ class wechatAlert(object):
         self.CROPID = 'ww6be7e447e62b0b8e'
         self.SECRET = 'Vcjmxvhs-4zkVSgF_La1Q6u0-oRmb-DRD567I_8iFHI'
         self.AGENTID = 1000002
-        self.USERID = 'QiuRuiJie'
+        self.USERID = 'xxxxxx'
 
     def getAcessToken(self):
         GURL = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={cropid}&corpsecret={secret}".format(
@@ -223,13 +223,12 @@ if __name__ == "__main__":
 
                     moveNodeList += offlineNodeList
                     addNodeList +=  onlineNodeList
-        # print(moveNodeList)
-        # print(addNodeList)
+        # 由于网络抖动或者其他原因，连续获取的api值可能不同，解决如下：
+        #根据retryTimes=2 的值，来决定连续获取2次的值，对比2次的值都相等，说明连续获取api的值没有误判，，，调用函数  check3Times
         moveNodeList = orchook.check3Times(moveNodeList,retryTimes)
         addNodeList = orchook.check3Times(addNodeList,retryTimes)
 
-        # print(moveNodeList)
-        # print(addNodeList)
+
         with open(templateFile,"r") as f1,open(templateFile1,"w",encoding= 'utf8') as f2:
             for val in f1.readlines():
                 for val01 in addNodeList:
