@@ -104,10 +104,10 @@ class OrcHook(object):
 
 class wechatAlert(object):
     def __init__(self):
-        self.CROPID = 'ww6be7e447e62b0b8e'
+        self.CROPID = 'xxxxxx'
         self.SECRET = 'Vcjmxvhs-4zkVSgF_La1Q6u0-oRmb-DRD567I_8iFHI'
         self.AGENTID = 1000002
-        self.USERID = 'QiuRuiJie'
+        self.USERID = 'xxx'
 
     def getAcessToken(self):
         GURL = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={cropid}&corpsecret={secret}".format(
