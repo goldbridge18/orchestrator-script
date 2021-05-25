@@ -3,10 +3,25 @@ import json,requests,time
 import pyjq
 import datetime,re,subprocess
 import urllib.request
+import telnetlib
 
+from collections import Counter
+
+'''
+解决以下问题：
+1.orchestrator集成的consul-client只上报数据master的变更信息,对slave的信息不更新上报至consul
+2.当slave节点 故障是I/o、sql线程为no使对应的haproxy并不下线已经为故障的slave节点
+3、如果在读写分离的时候,在haproxy配置的读端口下.不希望master提供服务
+4、当master发生切换后,如果旧的master节点宕机之后重启后,如果haproxy相对应的配置没有被更改,就master可能会被haproxy检测到并提供服务.
+————————————————
+版权声明：本文为CSDN博主「柔于似水」的原创文章，遵循CC 4.0 BY-SA版权协议，转载请附上原文出处链接及本声明。
+原文链接：https://blog.csdn.net/q936889811/article/details/103633791
+
+'''
 class OrcHook(object):
     def __init__(self,orc_ip,orc_port,num = 0):
-
+        self.ORCIP = orc_ip
+        self.ORCPORT = orc_port
         self.ORCAPI = "http://{orcip}:{orcport}/api".format(orcip=orc_ip,orcport=orc_port)
         self.NUM = num
 
@@ -54,34 +69,41 @@ class OrcHook(object):
         '''
         moveNodeList = []
         upNodeList = []
-        allNodeList = self.getAliasOfAllNode(request_cmd)
-        downList = self.getClusterDownNodes(request_cmd)
-        upList =  self.getClusterUpNodes(request_cmd)
-        masterList =  self.getMasterNodes(request_cmd)
-        behindMasterList = self.getSecondsBehindMaster(request_cmd)
+        getAllNodeList = self.getAliasOfAllNode(request_cmd)
+        getDownList = self.getClusterDownNodes(request_cmd)
+        getUpList =  self.getClusterUpNodes(request_cmd)
+        getMasterList =  self.getMasterNodes(request_cmd)
+        getBehindMasterList = self.getSecondsBehindMaster(request_cmd)
 
-        if len(downList) !=0 :
-            for val in downList:
+        # print("allNodeList ",self.getAliasOfAllNode(request_cmd))
+        # print("downList ", self.getClusterDownNodes(request_cmd))
+        # print("upList ", self.getClusterUpNodes(request_cmd))
+        # print("masterList ", self.getMasterNodes(request_cmd))
+        # print("behindMasterList ", self.getSecondsBehindMaster(request_cmd))
+
+        if len(getBehindMasterList) != 0:
+            for val in getBehindMasterList:
+                moveNodeList.append(val)
+                if val in getUpList:
+                    getUpList.remove(val)
+
+        if len(getDownList) !=0 :
+            for val in getDownList:
                 moveNodeList.append(val)
 
-        if len(behindMasterList) != 0:
-            for val in behindMasterList:
+        if len(getUpList) != 0 :
+            for val in getMasterList:
                 moveNodeList.append(val)
-                if val in upNodeList:
-                    upNodeList.remove(val)
-
-        if len(upList) != 0 :
-            for val in masterList:
-                moveNodeList.append(val)
-            for val in upList:
+            for val in getUpList:
                 upNodeList.append(val)
-
         else:
-            upNodeList.append(masterList[0])
+            upNodeList.append(getMasterList[0])
+
+
         ###如果 所有的slave 都延迟高， 且状态up ，如果提供master服务？？？？？
-        if len(moveNodeList) == len(allNodeList):
-            moveNodeList.remove(masterList[0])
-            return moveNodeList,masterList
+        if len(moveNodeList) == len(getAllNodeList):
+            moveNodeList.remove(getMasterList[0])
+            return moveNodeList,getMasterList
         return moveNodeList,upNodeList
 
     def getClusterAlias(self):
@@ -102,12 +124,30 @@ class OrcHook(object):
     def sedConsulTemplate(self):
         pass
 
+    def checkIpAndPort(self):
+
+        try:
+            telnetlib.Telnet(self.ORCIP, self.ORCPORT, timeout=2)
+            print("代理IP有效！")
+        except:
+            print("代理IP无效！")
+
+    def check3Times(self,list,retry_times):
+        reslist = []
+        res = Counter(list)
+        for key, val in res.items():
+            if val == retry_times:
+                reslist.append(key)
+        return reslist
+
+
+
 class wechatAlert(object):
     def __init__(self):
-        self.CROPID = 'xxxxxx'
+        self.CROPID = 'ww6be7e447e62b0b8e'
         self.SECRET = 'Vcjmxvhs-4zkVSgF_La1Q6u0-oRmb-DRD567I_8iFHI'
         self.AGENTID = 1000002
-        self.USERID = 'xxx'
+        self.USERID = 'QiuRuiJie'
 
     def getAcessToken(self):
         GURL = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={cropid}&corpsecret={secret}".format(
@@ -134,15 +174,17 @@ class wechatAlert(object):
                "duplicate_check_interval": 1800
         }
 
-        sendMessage = (bytes(json.dumps(data),'utf8'))
-        print(requests.post(url,sendMessage).text)
+        message = (bytes(json.dumps(data),'utf8'))
+        sendMessage = requests.post(url, message)
+        print("微信报警：",sendMessage.text)
 
 if __name__ == "__main__":
     ##orchestrator配置信息
     apiIp = "10.0.34.78"
     apiPort = 3000
     consulIpAndPort = "10.0.34.78:8500"
-    delaytime = 60
+    delaytime = 10
+    retryTimes = 2
 
     # 文件路径
     templateFile = "./haproxy.ctmpl"
@@ -150,9 +192,13 @@ if __name__ == "__main__":
     haproxyCfg = "/etc/haproxy/haproxy.cfg"
     logfile = "/var/log/orch_hook.log"
 
+    # templateFile = "/etc/consul-template/templates/haproxy.ctmpl"
+    # templateFile1 = "/etc/consul-template/templates/haproxy.ctmpl.1"
+    # haproxyCfg = "/etc/haproxy/haproxy.cfg"
+    # logfile = "/var/log/orch_hook.log"
     w = wechatAlert()
     orchook = OrcHook(apiIp, apiPort, delaytime)
-
+    count = 0
     while True:
         flag = True
         starttime = datetime.datetime.now()
@@ -161,19 +207,29 @@ if __name__ == "__main__":
         moveNodeList = []
         addNodeList = []
         tmpList = []
-        for val in aliasList:
-            cmd = "/cluster/alias/{alias}".format(alias=val)
-            status = orchook.getCheckStatus(cmd)
-            if status == True:
-                offlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[0]
-                onlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[1]
+        offlineNodeList = []
+        onlineNodeList = []
 
-                offlineNodeList = [val + "_"+ x for x in offlineNodeList]
-                onlineNodeList = [val + "_"+ x for x in onlineNodeList]
+        for i in range(retryTimes):
+            for val in aliasList:
+                cmd = "/cluster/alias/{alias}".format(alias=val)
+                status = orchook.getCheckStatus(cmd)
+                if status == True:
+                    offlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[0]
+                    onlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[1]
 
-                moveNodeList += offlineNodeList
-                addNodeList +=  onlineNodeList
+                    offlineNodeList = [val + "_"+ x for x in offlineNodeList]
+                    onlineNodeList = [val + "_"+ x for x in onlineNodeList]
 
+                    moveNodeList += offlineNodeList
+                    addNodeList +=  onlineNodeList
+        # print(moveNodeList)
+        # print(addNodeList)
+        moveNodeList = orchook.check3Times(moveNodeList,retryTimes)
+        addNodeList = orchook.check3Times(addNodeList,retryTimes)
+
+        # print(moveNodeList)
+        # print(addNodeList)
         with open(templateFile,"r") as f1,open(templateFile1,"w",encoding= 'utf8') as f2:
             for val in f1.readlines():
                 for val01 in addNodeList:
