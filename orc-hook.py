@@ -1,5 +1,5 @@
 import time
-
+import json,requests,time
 import pyjq
 import datetime,re,subprocess
 import urllib.request
@@ -7,12 +7,16 @@ import urllib.request
 class OrcHook(object):
     def __init__(self,orc_ip,orc_port,num = 0):
 
-        self.orc_api = "http://{orcip}:{orcport}/api".format(orcip=orc_ip,orcport=orc_port)
-        self.num = num
+        self.ORCAPI = "http://{orcip}:{orcport}/api".format(orcip=orc_ip,orcport=orc_port)
+        self.NUM = num
 
     def getJsonData(self,condition,request_cmd):
-        orc_url = "{api}{cmd}".format(api=self.orc_api,cmd=request_cmd)
-        data = pyjq.all(condition, url=orc_url)
+        orc_url = "{api}{cmd}".format(api=self.ORCAPI,cmd=request_cmd)
+        try:
+            data = pyjq.all(condition, url=orc_url)
+
+        except urllib.error.HTTPError as e:
+            print(request_cmd)
 
         return data
 
@@ -30,12 +34,12 @@ class OrcHook(object):
 
     def getDelayNodes(self,request_cmd):
         condition = ".[] | select(.Slave_IO_Running==true and .Slave_SQL_Running==true and .ReplicationDepth==1 " \
-                    "and .SQLDelay > {delaytime}) .Key.Hostname".format(delaytime=self.num)
+                    "and .SQLDelay > {delaytime}) .Key.Hostname".format(delaytime=self.NUM)
         return self.getJsonData(condition, request_cmd)
 
     def getSecondsBehindMaster(self,request_cmd):
-        condition = ".[] | select(.ReplicationDepth==1 and .SecondsBehindMaster.Int64 > {num}) " \
-                    ".Key.Hostname".format(num=self.num)
+        condition = ".[] | select(.ReplicationDepth==1 and .SecondsBehindMaster.Int64 > {NUM}) " \
+                    ".Key.Hostname".format(NUM=self.NUM)
         return self.getJsonData(condition, request_cmd)
 
     def getAliasOfAllNode(self,request_cmd):
@@ -86,8 +90,52 @@ class OrcHook(object):
         condition = ".[] .ClusterAlias"
         return self.getJsonData(condition, reqAlias)
 
+    def getCheckStatus(self,request_cmd):
+        orc_url = "{api}{cmd}".format(api=self.ORCAPI, cmd=request_cmd)
+        try:
+            data = pyjq.all(".[]", url=orc_url)
+            return True
+        except urllib.error.HTTPError as e:
+            # print(cmd,"不存在别名！")
+            return False
+
     def sedConsulTemplate(self):
         pass
+
+class wechatAlert(object):
+    def __init__(self):
+        self.CROPID = 'ww6be7e447e62b0b8e'
+        self.SECRET = 'Vcjmxvhs-4zkVSgF_La1Q6u0-oRmb-DRD567I_8iFHI'
+        self.AGENTID = 1000002
+        self.USERID = 'QiuRuiJie'
+
+    def getAcessToken(self):
+        GURL = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={cropid}&corpsecret={secret}".format(
+            cropid=self.CROPID, secret=self.SECRET)
+        res = requests.get(url=GURL)
+        token = pyjq.one(".access_token",json.loads(res.text))
+        return  token
+    def sendMessage(self,context = ''):
+        url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={token}".format(token=self.getAcessToken())
+        data = {
+               "touser" : self.USERID,
+               "toparty" : "2",
+               "totag" : "TagID1 | TagID2",
+               "msgtype" : "textcard",
+               "agentid" : self.AGENTID,
+               "textcard" : {
+                        "title" : "orc报警",
+                        "description" : "<div class=\"gray\">2016年9月26日</div> <div class=\"normal\">异常服务主机列表：{context}，上述主机在haproxy配置被修改。</div><div class=\"highlight\">请于登录相关实例查看报警原因</div>".format(context=context),
+                        "url" : "URL",
+                                    "btntxt":"更多"
+               },
+               "enable_id_trans": 0,
+               "enable_duplicate_check": 0,
+               "duplicate_check_interval": 1800
+        }
+
+        sendMessage = (bytes(json.dumps(data),'utf8'))
+        print(requests.post(url,sendMessage).text)
 
 if __name__ == "__main__":
     ##orchestrator配置信息
@@ -102,24 +150,29 @@ if __name__ == "__main__":
     haproxyCfg = "/etc/haproxy/haproxy.cfg"
     logfile = "/var/log/orch_hook.log"
 
+    w = wechatAlert()
+    orchook = OrcHook(apiIp, apiPort, delaytime)
+
     while True:
         flag = True
         starttime = datetime.datetime.now()
-        orchook = OrcHook(apiIp,apiPort,delaytime)
+
         aliasList = orchook.getClusterAlias()
         moveNodeList = []
         addNodeList = []
+        tmpList = []
         for val in aliasList:
             cmd = "/cluster/alias/{alias}".format(alias=val)
-            offlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[0]
-            onlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[1]
+            status = orchook.getCheckStatus(cmd)
+            if status == True:
+                offlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[0]
+                onlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[1]
 
-            offlineNodeList = [val + "_"+ x for x in offlineNodeList]
-            onlineNodeList = [val + "_"+ x for x in onlineNodeList]
-            # print("on :",onlineNodeList)
-            # print("off :",offlineNodeList)
-            moveNodeList += offlineNodeList
-            addNodeList +=  onlineNodeList
+                offlineNodeList = [val + "_"+ x for x in offlineNodeList]
+                onlineNodeList = [val + "_"+ x for x in onlineNodeList]
+
+                moveNodeList += offlineNodeList
+                addNodeList +=  onlineNodeList
 
         with open(templateFile,"r") as f1,open(templateFile1,"w",encoding= 'utf8') as f2:
             for val in f1.readlines():
@@ -127,14 +180,14 @@ if __name__ == "__main__":
                     if val01 in val:
                         if re.search('weight \d+', val).group() != "weight 10":
                             flag = False
+                            tmpList.append('{val01}:up'.format(val01=val01))
                         val = re.sub('weight \d+',"weight 10",val)
-                        # print(flag)
-
 
                 for val01 in moveNodeList:
                     if val01 in val:
                         if re.search('weight \d+', val).group() != "weight 0":
                             flag = False
+                            tmpList.append('{val01}:down'.format(val01=val01))
                         val = re.sub('weight \d+',"weight 0",val)
 
                 f2.write(val)
@@ -158,6 +211,9 @@ if __name__ == "__main__":
             else:
                 cmd = "/bin/cp -rf {templateFile1} {templateFile}".format(templateFile1=templateFile1,templateFile=templateFile)
                 subprocess.getstatusoutput(cmd)
+                print("---")
+            w.sendMessage(tmpList)
+            print("------>",tmpList)
         else:
             print("没有信息更改！")
         endtime = datetime.datetime.now()
