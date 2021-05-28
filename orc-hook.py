@@ -1,10 +1,10 @@
 import time
-import json,requests,time
+import json,requests,time,os
 import pyjq
 import datetime,re,subprocess
 import urllib.request
 import telnetlib
-
+import logging
 from collections import Counter
 
 '''
@@ -24,6 +24,7 @@ class OrcHook(object):
         self.ORCPORT = orc_port
         self.ORCAPI = "http://{orcip}:{orcport}/api".format(orcip=orc_ip,orcport=orc_port)
         self.NUM = num
+
 
     def getJsonData(self,condition,request_cmd):
         orc_url = "{api}{cmd}".format(api=self.ORCAPI,cmd=request_cmd)
@@ -75,12 +76,6 @@ class OrcHook(object):
         getMasterList =  self.getMasterNodes(request_cmd)
         getBehindMasterList = self.getSecondsBehindMaster(request_cmd)
 
-        # print("allNodeList ",self.getAliasOfAllNode(request_cmd))
-        # print("downList ", self.getClusterDownNodes(request_cmd))
-        # print("upList ", self.getClusterUpNodes(request_cmd))
-        # print("masterList ", self.getMasterNodes(request_cmd))
-        # print("behindMasterList ", self.getSecondsBehindMaster(request_cmd))
-
         if len(getBehindMasterList) != 0:
             for val in getBehindMasterList:
                 moveNodeList.append(val)
@@ -124,14 +119,6 @@ class OrcHook(object):
     def sedConsulTemplate(self):
         pass
 
-    def checkIpAndPort(self):
-
-        try:
-            telnetlib.Telnet(self.ORCIP, self.ORCPORT, timeout=2)
-            print("代理IP有效！")
-        except:
-            print("代理IP无效！")
-
     def check3Times(self,list,retry_times):
         reslist = []
         res = Counter(list)
@@ -147,7 +134,7 @@ class wechatAlert(object):
         self.CROPID = 'ww6be7e447e62b0b8e'
         self.SECRET = 'Vcjmxvhs-4zkVSgF_La1Q6u0-oRmb-DRD567I_8iFHI'
         self.AGENTID = 1000002
-        self.USERID = 'xxxxxx'
+        self.USERID = 'QiuRuiJie'
 
     def getAcessToken(self):
         GURL = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={cropid}&corpsecret={secret}".format(
@@ -157,6 +144,7 @@ class wechatAlert(object):
         return  token
     def sendMessage(self,context = ''):
         url = "https://qyapi.weixin.qq.com/cgi-bin/message/send?access_token={token}".format(token=self.getAcessToken())
+        crunTime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         data = {
                "touser" : self.USERID,
                "toparty" : "2",
@@ -165,7 +153,7 @@ class wechatAlert(object):
                "agentid" : self.AGENTID,
                "textcard" : {
                         "title" : "orc报警",
-                        "description" : "<div class=\"gray\">2016年9月26日</div> <div class=\"normal\">异常服务主机列表：{context}，上述主机在haproxy配置被修改。</div><div class=\"highlight\">请于登录相关实例查看报警原因</div>".format(context=context),
+                        "description" : "<div class=\"gray\">{crutime}</div> <div class=\"normal\">异常服务主机列表：{context}，上述主机在haproxy配置被修改。</div><div class=\"highlight\">请于登录相关实例查看报警原因</div>".format(crutime=crunTime,context=context),
                         "url" : "URL",
                                     "btntxt":"更多"
                },
@@ -175,35 +163,94 @@ class wechatAlert(object):
         }
 
         message = (bytes(json.dumps(data),'utf8'))
+
         sendMessage = requests.post(url, message)
         print("微信报警：",sendMessage.text)
 
+class LogServer(object):
+    def logFile(self,context,modlename,logfilepath):
+        curDate = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        # 创建logger记录器
+        logger = logging.getLogger(modlename)
+        logger.setLevel(logging.DEBUG)
+
+        #日志保存到磁盘文件的处理器
+        fh = logging.FileHandler(logfilepath,encoding='utf8')
+        fh.setLevel(logging.DEBUG)
+
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        fh.setFormatter(formatter)
+        #sh.setFormatter(formatter)
+
+        logger.addHandler(fh)
+        #logger.addHandler(sh)
+        if modlename == "info":
+            logger.info(context)
+        elif modlename == "debug":
+            logger.debug(context)
+        else:
+            pass
+
+        logger.removeHandler(fh)
+
+class CommServer(object):
+    def __init__(self):
+        pass
+    def checkIpAndPort(self,ipaddr_list,port):
+        #判断ip 和端口是否可用
+        # count = 0
+        # while count < 4:
+            for ip in ipaddr_list:
+                try:
+                    telnetlib.Telnet(ip, port, timeout=2)
+                    # print("代理IP有效！",ip)
+                    return ip
+                except:
+                    # print("代理IP无效！")
+                    pass
+                    # return None
+            # count += 1
+
 if __name__ == "__main__":
     ##orchestrator配置信息
-    apiIp = "10.0.34.78"
+    ipList = ["10.0.34.38","10.0.34.43","10.0.34.78"]
     apiPort = 3000
-    consulIpAndPort = "10.0.34.78:8500"
     delaytime = 10
     retryTimes = 2
+    interval = 0.1   # 一次完整的执行时间是 需要考虑到 interval  retryTimes 检测ip可用的for循环 共同需要的时间的总和
 
     # 文件路径
+    curDate = datetime.datetime.now().strftime("%Y-%m-%d")
+    templateFileBack = "/Users/eeo-dba001/PycharmProjects/pythonProject/back/haproxy.ctmpl"
     templateFile = "./haproxy.ctmpl"
     templateFile1 = "./haproxy.ctmpl.1"
     haproxyCfg = "/etc/haproxy/haproxy.cfg"
-    logfile = "/var/log/orch_hook.log"
+    logfile = "orch_hook_{curtime}.log".format(curtime=curDate)
 
     # templateFile = "/etc/consul-template/templates/haproxy.ctmpl"
     # templateFile1 = "/etc/consul-template/templates/haproxy.ctmpl.1"
     # haproxyCfg = "/etc/haproxy/haproxy.cfg"
     # logfile = "/var/log/orch_hook.log"
     w = wechatAlert()
-    orchook = OrcHook(apiIp, apiPort, delaytime)
-    count = 0
+    log = LogServer()
+    comm = CommServer()
+    # orchook = OrcHook(apiIp, apiPort, delaytime)
+
     while True:
         flag = True
         starttime = datetime.datetime.now()
 
+        #找到可用的ip
+        # for apiIp in ipList:
+        apiIp = comm.checkIpAndPort(ipList,apiPort)
+        if apiIp == None:
+            log.logFile("orc没有可用的ip和端口！！","info",logfile)
+            w.sendMessage("orc没有可用的ip和端口！！")
+            exit()
+        orchook = OrcHook(apiIp, apiPort, delaytime)
+
         aliasList = orchook.getClusterAlias()
+
         moveNodeList = []
         addNodeList = []
         tmpList = []
@@ -223,11 +270,11 @@ if __name__ == "__main__":
 
                     moveNodeList += offlineNodeList
                     addNodeList +=  onlineNodeList
+            time.sleep(interval)
         # 由于网络抖动或者其他原因，连续获取的api值可能不同，解决如下：
         #根据retryTimes=2 的值，来决定连续获取2次的值，对比2次的值都相等，说明连续获取api的值没有误判，，，调用函数  check3Times
         moveNodeList = orchook.check3Times(moveNodeList,retryTimes)
         addNodeList = orchook.check3Times(addNodeList,retryTimes)
-
 
         with open(templateFile,"r") as f1,open(templateFile1,"w",encoding= 'utf8') as f2:
             for val in f1.readlines():
@@ -251,28 +298,28 @@ if __name__ == "__main__":
         haproxyReloadCmd = "systemctl reload haproxy"
         #consul-template
         if flag == False:
-            consulTemplateCmd = "/usr/local/bin/consul-template -consul-addr={consulIpAndPort}" \
-                                " -template \"{templateFile}:{haproxycfg}\" " \
-                                "-once".format(consulIpAndPort=consulIpAndPort ,templateFile=templateFile1,haproxycfg=haproxyCfg)
-            consulOutCmd = subprocess.getstatusoutput(consulTemplateCmd)
+            # consulTemplateCmd = "/usr/local/bin/consul-template -consul-addr={consulIpAndPort}" \
+            #                     " -template \"{templateFile}:{haproxycfg}\" " \
+            #                     "-once".format(consulIpAndPort=consulIpAndPort ,templateFile=templateFile1,haproxycfg=haproxyCfg)
+            backTempaleFile = "/bin/cp -rf {templateFile} {backpath}-{curtime}".format(templateFile=templateFile,backpath=templateFileBack,curtime=datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
+            replaceFileCmd = "/bin/cp -rf {templateFile1} {templateFile}".format(templateFile1=templateFile1,
+                                                                      templateFile=templateFile)
+            print(subprocess.getstatusoutput(backTempaleFile))
+            subprocess.getstatusoutput(replaceFileCmd)
+            consulOutCmd = subprocess.getstatusoutput(consulRestartCmd)
             if consulOutCmd[0] != 0:
-                subprocess.getstatusoutput(consulRestartCmd)
-
-            #reload haproxy
-            haproxyOutCmd = subprocess.getstatusoutput(haproxyReloadCmd)
-            # print(haproxyOutCmd)
-            if haproxyOutCmd[0] == 0 :
-                    subprocess.getstatusoutput(consulRestartCmd)
+                log.logFile(consulOutCmd,"debug",logfile)
             else:
-                cmd = "/bin/cp -rf {templateFile1} {templateFile}".format(templateFile1=templateFile1,templateFile=templateFile)
-                subprocess.getstatusoutput(cmd)
-                print("---")
+                log.logFile("consul-template restart successful", "debug", logfile)
+
             w.sendMessage(tmpList)
+            log.logFile("发生更改的节点：{a}".format(a = tmpList), "info", logfile)
             print("------>",tmpList)
         else:
             print("没有信息更改！")
+            log.logFile("没有信息更改","",logfile)
         endtime = datetime.datetime.now()
 
         print("消耗总时间：",endtime-starttime)
         # exit()
-        time.sleep(1)
+        # time.sleep(1)
