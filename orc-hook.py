@@ -12,11 +12,17 @@ from collections import Counter
 1.orchestrator集成的consul-client只上报数据master的变更信息,对slave的信息不更新上报至consul
 2.当slave节点 故障是I/o、sql线程为no使对应的haproxy并不下线已经为故障的slave节点
 3、如果在读写分离的时候,在haproxy配置的读端口下.不希望master提供服务
-4、当master发生切换后,如果旧的master节点宕机之后重启后,如果haproxy相对应的配置没有被更改,就master可能会被haproxy检测到并提供服务.
+4、当master发生切换后,如果旧的master节点宕机之后重启后,如果haproxy相对应的配置没有被更改,旧master可能会被haproxy检测到并提供服务.
 ————————————————
 版权声明：本文为CSDN博主「柔于似水」的原创文章，遵循CC 4.0 BY-SA版权协议，转载请附上原文出处链接及本声明。
 原文链接：https://blog.csdn.net/q936889811/article/details/103633791
 
+'''
+
+'''
+需要的安装的包
+yum -y install python3.x86_64  python3-devel.x86_64  flex bison   libtool make automake  autoconf
+pip3 install pyjq requests
 '''
 class OrcHook(object):
     def __init__(self,orc_ip,orc_port,num = 0):
@@ -128,13 +134,12 @@ class OrcHook(object):
         return reslist
 
 
-
 class wechatAlert(object):
     def __init__(self):
-        self.CROPID = 'ww6be7e447e62b0b8e'
-        self.SECRET = 'Vcjmxvhs-4zkVSgF_La1Q6u0-oRmb-DRD567I_8iFHI'
+        self.CROPID = 'ww6be7ex447e62xb0b8e'
+        self.SECRET = 'Vcjmxvhs-4zkVSgF_La1Q6u0-oRxmb-DRD567I_8iFHI'
         self.AGENTID = 1000002
-        self.USERID = 'QiuRuiJie'
+        self.USERID = 'xxxxx'
 
     def getAcessToken(self):
         GURL = "https://qyapi.weixin.qq.com/cgi-bin/gettoken?corpid={cropid}&corpsecret={secret}".format(
@@ -215,22 +220,24 @@ if __name__ == "__main__":
     ##orchestrator配置信息
     ipList = ["10.0.34.38","10.0.34.43","10.0.34.78"]
     apiPort = 3000
-    delaytime = 10
+    delaytime = 100000000000000
     retryTimes = 2
-    interval = 0.1   # 一次完整的执行时间是 需要考虑到 interval  retryTimes 检测ip可用的for循环 共同需要的时间的总和
+    interval = 30   # 一次完整的执行时间是 需要考虑到 interval  retryTimes 检测ip可用的for循环 共同需要的时间的总和
 
     # 文件路径
     curDate = datetime.datetime.now().strftime("%Y-%m-%d")
-    templateFileBack = "/Users/eeo-dba001/PycharmProjects/pythonProject/back/haproxy.ctmpl"
-    templateFile = "./haproxy.ctmpl"
-    templateFile1 = "./haproxy.ctmpl.1"
-    haproxyCfg = "/etc/haproxy/haproxy.cfg"
     logfile = "orch_hook_{curtime}.log".format(curtime=curDate)
 
+    templateFileBack = "/Users/eeo-dba001/PycharmProjects/pythonProject/back/haproxy.ctmpl"
+    templateFile = "./haproxy.ctmpl"       #原模板文件
+    templateFile1 = "./haproxy.ctmpl.1"   #生成新的模板文件
+    #haproxyCfg = "/etc/haproxy/haproxy.cfg"
+
+    # templateFileBack = "/etc/consul-template/back/haproxy.ctmpl"
     # templateFile = "/etc/consul-template/templates/haproxy.ctmpl"
     # templateFile1 = "/etc/consul-template/templates/haproxy.ctmpl.1"
     # haproxyCfg = "/etc/haproxy/haproxy.cfg"
-    # logfile = "/var/log/orch_hook.log"
+
     w = wechatAlert()
     log = LogServer()
     comm = CommServer()
@@ -264,13 +271,13 @@ if __name__ == "__main__":
                 if status == True:
                     offlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[0]
                     onlineNodeList = orchook.getMoveOrUpClusterNode(cmd)[1]
-
+                    #生成 haproxy文件中对应的server名称： 别名_主机名
                     offlineNodeList = [val + "_"+ x for x in offlineNodeList]
                     onlineNodeList = [val + "_"+ x for x in onlineNodeList]
 
                     moveNodeList += offlineNodeList
                     addNodeList +=  onlineNodeList
-            time.sleep(interval)
+            time.sleep(interval)  #连续获取api的值的间隔时间
         # 由于网络抖动或者其他原因，连续获取的api值可能不同，解决如下：
         #根据retryTimes=2 的值，来决定连续获取2次的值，对比2次的值都相等，说明连续获取api的值没有误判，，，调用函数  check3Times
         moveNodeList = orchook.check3Times(moveNodeList,retryTimes)
@@ -295,13 +302,16 @@ if __name__ == "__main__":
                 f2.write(val)
 
         consulRestartCmd = "systemctl restart consul-template"
-        haproxyReloadCmd = "systemctl reload haproxy"
+        # haproxyReloadCmd = "systemctl reload haproxy"
         #consul-template
         if flag == False:
             # consulTemplateCmd = "/usr/local/bin/consul-template -consul-addr={consulIpAndPort}" \
             #                     " -template \"{templateFile}:{haproxycfg}\" " \
             #                     "-once".format(consulIpAndPort=consulIpAndPort ,templateFile=templateFile1,haproxycfg=haproxyCfg)
             backTempaleFile = "/bin/cp -rf {templateFile} {backpath}-{curtime}".format(templateFile=templateFile,backpath=templateFileBack,curtime=datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S"))
+            # if not os.path.exists("/etc/consul-template/back/"):
+            #     os.makedirs("/etc/consul-template/back/")
+
             replaceFileCmd = "/bin/cp -rf {templateFile1} {templateFile}".format(templateFile1=templateFile1,
                                                                       templateFile=templateFile)
             print(subprocess.getstatusoutput(backTempaleFile))
@@ -309,6 +319,7 @@ if __name__ == "__main__":
             consulOutCmd = subprocess.getstatusoutput(consulRestartCmd)
             if consulOutCmd[0] != 0:
                 log.logFile(consulOutCmd,"debug",logfile)
+                w.sendMessage("consul-template 重启失败！！！")
             else:
                 log.logFile("consul-template restart successful", "debug", logfile)
 
@@ -321,5 +332,3 @@ if __name__ == "__main__":
         endtime = datetime.datetime.now()
 
         print("消耗总时间：",endtime-starttime)
-        # exit()
-        # time.sleep(1)
