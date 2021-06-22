@@ -218,7 +218,7 @@ class CommServer(object):
 
 if __name__ == "__main__":
     ##orchestrator配置信息
-    ipList = ["10.0.34.38","10.0.34.43","10.0.34.78"]
+    ipList = ["10.0.0.38","10.0.0.43","10.0.0.78"]
     apiPort = 3000
     delaytime = 100000000000000
     retryTimes = 2
